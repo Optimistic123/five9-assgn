@@ -39,8 +39,8 @@ function setScroll(top: number) {
   });
 }
 /** One wheel "notch" at the current time; the scroll it causes is dispatched separately. */
-function wheel(deltaY = 30) {
-  const e = new WheelEvent('wheel', { deltaY });
+function wheel(deltaY = 30, deltaX = 0) {
+  const e = new WheelEvent('wheel', { deltaY, deltaX });
   Object.defineProperty(e, 'timeStamp', { value: now });
   scroller().dispatchEvent(e);
 }
@@ -57,6 +57,7 @@ beforeEach(() => {
   scrollHeight = 2000;
   scrollTop = 0;
   now = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
   vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(() => scrollHeight);
   vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(() => CLIENT_HEIGHT);
   vi.spyOn(Element.prototype, 'scrollTop', 'get').mockImplementation(() => scrollTop);
@@ -282,5 +283,71 @@ describe('LaunchList infinite scroll', () => {
     now += 1000;
     act(() => wheel());
     await waitFor(() => expect(requestedAfterButton(spy)).toEqual([11, 12]));
+  });
+
+  it('loads one page per trackpad swipe even when swipes run into each other (no pause)', async () => {
+    const spy = vi.spyOn(api, 'fetchLaunchesPage').mockImplementation(async (_r, n) => page(n));
+    const user = userEvent.setup();
+    render(<LaunchList rocketId={null} />);
+    await loadButtonPages(user);
+    scrollTop = bottom(); // already at the very bottom (no scroll event): wheel input alone must trigger
+
+    // A swipe ramps up then decays (momentum); the next starts before it ends.
+    const swipe = [4, 12, 26, 38, 42, 36, 30, 25, 21, 17, 14, 11, 9, 7, 6, 5, 4, 3];
+    now += 1000;
+    for (let s = 1; s <= 3; s++) {
+      for (const dy of swipe) {
+        now += 16;
+        act(() => wheel(dy));
+      }
+      await screen.findByText(`Mission ${10 + s}-3`);
+      expect(requestedAfterButton(spy)).toHaveLength(s);
+    }
+    expect(requestedAfterButton(spy)).toEqual([11, 12, 13]);
+  });
+
+  it('never stays stuck: keeps loading if scrolling down continues well after a page arrived', async () => {
+    const spy = vi.spyOn(api, 'fetchLaunchesPage').mockImplementation(async (_r, n) => page(n));
+    const user = userEvent.setup();
+    render(<LaunchList rocketId={null} />);
+    await loadButtonPages(user);
+    scrollTop = bottom(); // already at the very bottom, without a scroll event
+
+    // Steady input with no pauses and no new-swipe pattern (one long gesture).
+    now += 1000;
+    const steady = async (ms: number) => {
+      for (let t = 0; t < ms; t += 16) {
+        now += 16;
+        act(() => wheel(10));
+      }
+    };
+    await steady(100);
+    await screen.findByText('Mission 11-3');
+    await steady(1000); // same gesture, shortly after the page arrived: nothing
+    expect(requestedAfterButton(spy)).toEqual([11]);
+    await steady(700); // now more than 1.5 s after page 11 arrived
+    await waitFor(() => expect(requestedAfterButton(spy)).toEqual([11, 12]));
+  });
+
+  it('does not load on horizontal scrolling, even with a slight downward drift', async () => {
+    const spy = vi.spyOn(api, 'fetchLaunchesPage').mockImplementation(async (_r, n) => page(n));
+    const user = userEvent.setup();
+    render(<LaunchList rocketId={null} />);
+    await loadButtonPages(user);
+    scrollTop = bottom() - 40; // near the bottom, where a vertical wheel would load
+
+    now += 1000;
+    for (let i = 0; i < 20; i++) {
+      now += 16;
+      act(() => wheel(2, 30)); // sideways swipe drifting down...
+      setScroll(bottom() - 40 + i * 2); // ...which also moves the list down a little
+    }
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(requestedAfterButton(spy)).toEqual([]);
+
+    // A vertical swipe right after still works.
+    now += 16;
+    act(() => wheel(30));
+    await waitFor(() => expect(requestedAfterButton(spy)).toEqual([11]));
   });
 });

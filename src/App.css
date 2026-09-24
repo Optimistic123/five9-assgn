@@ -168,6 +168,9 @@ table.launches {
   .row-enter .cell, .row-enter .cell-content, .popover { animation: none; }
 }
 
+/* The footer and placeholders are as wide as the visible area; pinning them to the left
+   keeps them centred in view while the table scrolls sideways. */
+.footer, .placeholder { position: sticky; left: 0; }
 .footer { display: flex; flex-direction: column; align-items: center; padding: 24px 0; }
 .load-more {
   padding: 10px 24px; font: inherit; font-weight: 600; cursor: pointer;
