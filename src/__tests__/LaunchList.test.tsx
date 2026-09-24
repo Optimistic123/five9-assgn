@@ -24,36 +24,54 @@ function page(n: number): LaunchPage {
   };
 }
 
-// Controllable IntersectionObserver: tests call `scrollSentinelIntoView()`.
-let observers: { cb: IntersectionObserverCallback; el?: Element }[] = [];
-class MockIntersectionObserver {
-  private entry: { cb: IntersectionObserverCallback; el?: Element };
-  constructor(cb: IntersectionObserverCallback) {
-    this.entry = { cb };
-    observers.push(this.entry);
-  }
-  observe(el: Element) { this.entry.el = el; }
-  disconnect() { observers = observers.filter((o) => o !== this.entry); }
-  unobserve() {}
-  takeRecords() { return []; }
-}
-function scrollSentinelIntoView() {
+// jsdom has no layout: fake a scrollable table region and drive its scroll position.
+// `now` is the timestamp given to wheel events, which is how gestures are told apart.
+let scrollHeight = 2000;
+let scrollTop = 0;
+let now = 0;
+const CLIENT_HEIGHT = 500;
+const bottom = () => scrollHeight - CLIENT_HEIGHT;
+const scroller = () => document.querySelector('.table-scroll') as HTMLElement;
+function setScroll(top: number) {
+  scrollTop = top;
   act(() => {
-    observers.forEach((o) =>
-      o.cb([{ isIntersecting: true, target: o.el } as IntersectionObserverEntry], {} as IntersectionObserver),
-    );
+    scroller().dispatchEvent(new Event('scroll'));
   });
+}
+/** One wheel "notch" at the current time; the scroll it causes is dispatched separately. */
+function wheel(deltaY = 30) {
+  const e = new WheelEvent('wheel', { deltaY });
+  Object.defineProperty(e, 'timeStamp', { value: now });
+  scroller().dispatchEvent(e);
+}
+/** A new downward wheel gesture (after a pause) that reaches the bottom. */
+function scrollDownToBottom() {
+  now += 1000;
+  setScroll(0);
+  wheel();
+  setScroll(bottom());
 }
 
 beforeEach(() => {
   queryCache.clear();
-  observers = [];
-  vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+  scrollHeight = 2000;
+  scrollTop = 0;
+  now = 0;
+  vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(() => scrollHeight);
+  vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(() => CLIENT_HEIGHT);
+  vi.spyOn(Element.prototype, 'scrollTop', 'get').mockImplementation(() => scrollTop);
 });
 afterEach(() => {
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
 });
+
+async function loadButtonPages(user: ReturnType<typeof userEvent.setup>) {
+  await screen.findByText('Mission 1-1');
+  for (let n = 2; n <= BUTTON_PAGE_LIMIT; n++) {
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText(`Mission ${n}-3`);
+  }
+}
 
 describe('LaunchList paging', () => {
   it('loads 3 per page via the button for 10 pages, then switches to infinite scroll', async () => {
@@ -63,25 +81,20 @@ describe('LaunchList paging', () => {
 
     expect(await screen.findByText('Mission 1-1')).toBeInTheDocument();
     expect(screen.getAllByRole('row')).toHaveLength(1 + 3);
-
-    for (let n = 2; n <= BUTTON_PAGE_LIMIT; n++) {
-      await user.click(screen.getByRole('button', { name: 'Load more' }));
-      await screen.findByText(`Mission ${n}-3`);
-    }
+    await loadButtonPages(user);
     expect(screen.getAllByRole('row')).toHaveLength(1 + 30);
     expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
-    expect(screen.getByTestId('scroll-sentinel')).toBeInTheDocument();
+    expect(screen.getByText('Scroll for more')).toBeInTheDocument();
 
-    scrollSentinelIntoView();
+    scrollDownToBottom();
     expect(await screen.findByText('Mission 11-1')).toBeInTheDocument();
     expect(spy).toHaveBeenCalledWith(null, 11);
 
-    scrollSentinelIntoView();
+    scrollDownToBottom();
     await screen.findByText('Mission 12-1');
-    scrollSentinelIntoView();
+    scrollDownToBottom();
     await screen.findByText('Mission 13-1');
     expect(await screen.findByText(/every launch/)).toBeInTheDocument();
-    expect(screen.queryByTestId('scroll-sentinel')).not.toBeInTheDocument();
   });
 
   it('renders cached rows immediately, then replaces them with network data', async () => {
@@ -124,36 +137,150 @@ describe('LaunchList errors', () => {
 });
 
 describe('LaunchList infinite scroll', () => {
-  it('requests one page at a time even if the sentinel fires repeatedly', async () => {
+  const requestedAfterButton = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.map(([, n]) => n as number).filter((n) => n > BUTTON_PAGE_LIMIT);
+
+  it('does not load on its own after the 10th page, even when already at the bottom', async () => {
+    const spy = vi.spyOn(api, 'fetchLaunchesPage').mockImplementation(async (_r, n) => page(n));
+    const user = userEvent.setup();
+    render(<LaunchList rocketId={null} />);
+    scrollTop = bottom(); // user clicked "Load more" at the bottom
+    await loadButtonPages(user);
+
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(requestedAfterButton(spy)).toEqual([]);
+    expect(screen.getByText('page 10', { exact: false })).toBeInTheDocument();
+
+    scrollDownToBottom();
+    await screen.findByText('Mission 11-3');
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(requestedAfterButton(spy)).toEqual([11]);
+  });
+
+  it('requests one page at a time even with rapid scroll events', async () => {
     const pending: ((p: LaunchPage) => void)[] = [];
     const spy = vi.spyOn(api, 'fetchLaunchesPage').mockImplementation(async (_r, n) =>
       n <= BUTTON_PAGE_LIMIT ? page(n) : new Promise<LaunchPage>((r) => pending.push(r)),
     );
     const user = userEvent.setup();
     render(<LaunchList rocketId={null} />);
-    await screen.findByText('Mission 1-1');
-    for (let n = 2; n <= BUTTON_PAGE_LIMIT; n++) {
-      await user.click(screen.getByRole('button', { name: 'Load more' }));
-      await screen.findByText(`Mission ${n}-3`);
-    }
+    await loadButtonPages(user);
 
-    // Rapid scrolling: several intersections before React re-renders.
+    // Several scroll events before React re-renders, then more while page 11 is in flight.
+    now += 1000;
     act(() => {
-      for (let i = 0; i < 3; i++) {
-        observers.forEach((o) =>
-          o.cb([{ isIntersecting: true, target: o.el } as IntersectionObserverEntry], {} as IntersectionObserver),
-        );
+      for (let i = 1; i <= 5; i++) {
+        scrollTop = bottom() - 50 + i * 10;
+        scroller().dispatchEvent(new Event('scroll'));
       }
     });
-    scrollSentinelIntoView(); // and again while page 11 is still in flight
-
-    const requestedPages = () => spy.mock.calls.map(([, n]) => n).filter((n) => n > BUTTON_PAGE_LIMIT);
-    await waitFor(() => expect(requestedPages()).toEqual([11]));
+    scrollDownToBottom();
+    await waitFor(() => expect(requestedAfterButton(spy)).toEqual([11]));
 
     // Only after page 11 arrives can page 12 be requested.
     await act(async () => pending[0](page(11)));
     await screen.findByText('Mission 11-3');
-    scrollSentinelIntoView();
-    await waitFor(() => expect(requestedPages()).toEqual([11, 12]));
+    scrollDownToBottom();
+    await waitFor(() => expect(requestedAfterButton(spy)).toEqual([11, 12]));
+  });
+
+  it('keeps the Load more button when the rows do not fill the table area', async () => {
+    scrollHeight = 400; // shorter than the 500px viewport: nothing to scroll
+    const spy = vi.spyOn(api, 'fetchLaunchesPage').mockImplementation(async (_r, n) => page(n));
+    const user = userEvent.setup();
+    render(<LaunchList rocketId={null} />);
+    await loadButtonPages(user);
+
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText('Mission 11-3');
+    expect(requestedAfterButton(spy)).toEqual([11]);
+  });
+
+  it('does not load when scrolling up near the bottom', async () => {
+    const spy = vi.spyOn(api, 'fetchLaunchesPage').mockImplementation(async (_r, n) => page(n));
+    const user = userEvent.setup();
+    render(<LaunchList rocketId={null} />);
+    await loadButtonPages(user);
+    scrollDownToBottom();
+    await screen.findByText('Mission 11-3');
+
+    now += 1000;
+    wheel(-30); // a new gesture...
+    setScroll(bottom() - 60); // ...scrolling up, still within the trigger zone
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(requestedAfterButton(spy)).toEqual([11]);
+  });
+
+  it('loads one page per scroll gesture even when later pages are cached', async () => {
+    for (let n = 1; n <= TOTAL_PAGES; n++) queryCache.set(`launches:all:${n}`, page(n));
+    // Background refreshes never resolve, so everything shown comes from the cache.
+    vi.spyOn(api, 'fetchLaunchesPage').mockImplementation(() => new Promise<LaunchPage>(() => {}));
+    const user = userEvent.setup();
+    render(<LaunchList rocketId={null} />);
+    await loadButtonPages(user);
+
+    // One continuous flick: wheel input every 16 ms, scrolling down inside the trigger zone.
+    now += 1000;
+    for (let i = 1; i <= 10; i++) {
+      now += 16;
+      wheel();
+      setScroll(bottom() - 100 + i * 10);
+    }
+    await screen.findByText('Mission 11-3');
+    expect(screen.queryByText('Mission 12-1')).not.toBeInTheDocument();
+
+    // A new gesture (after a pause) loads the next one.
+    scrollDownToBottom();
+    expect(await screen.findByText('Mission 12-1')).toBeInTheDocument();
+    expect(screen.queryByText('Mission 13-1')).not.toBeInTheDocument();
+  });
+
+  it('does not load a second page when one gesture continues through a slow load', async () => {
+    const pending: ((p: LaunchPage) => void)[] = [];
+    const spy = vi.spyOn(api, 'fetchLaunchesPage').mockImplementation(async (_r, n) =>
+      n <= BUTTON_PAGE_LIMIT ? page(n) : new Promise<LaunchPage>((r) => pending.push(r)),
+    );
+    const user = userEvent.setup();
+    render(<LaunchList rocketId={null} />);
+    await loadButtonPages(user);
+
+    // Wheel input every 16 ms: trigger page 11, let it arrive mid-gesture, keep going.
+    now += 1000;
+    let top = bottom() - 100;
+    const tick = () => {
+      now += 16;
+      top += 5;
+      wheel();
+      setScroll(top);
+    };
+    for (let i = 0; i < 5; i++) tick();
+    expect(requestedAfterButton(spy)).toEqual([11]);
+    await act(async () => pending[0](page(11)));
+    await screen.findByText('Mission 11-3');
+    for (let i = 0; i < 10; i++) tick();
+    expect(requestedAfterButton(spy)).toEqual([11]);
+
+    // After a pause, a new gesture loads page 12.
+    scrollDownToBottom();
+    await waitFor(() => expect(requestedAfterButton(spy)).toEqual([11, 12]));
+  });
+
+  it('loads on a new wheel gesture when already at the very bottom (no scroll event possible)', async () => {
+    const spy = vi.spyOn(api, 'fetchLaunchesPage').mockImplementation(async (_r, n) => page(n));
+    const user = userEvent.setup();
+    render(<LaunchList rocketId={null} />);
+    await loadButtonPages(user);
+    scrollDownToBottom();
+    await screen.findByText('Mission 11-3');
+
+    // Same gesture keeps wheeling at the bottom: nothing more.
+    now += 16;
+    wheel();
+    expect(requestedAfterButton(spy)).toEqual([11]);
+
+    // After a pause, a new wheel-down at the bottom loads the next page, with no scroll event.
+    now += 1000;
+    act(() => wheel());
+    await waitFor(() => expect(requestedAfterButton(spy)).toEqual([11, 12]));
   });
 });

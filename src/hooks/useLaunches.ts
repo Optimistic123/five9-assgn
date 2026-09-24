@@ -9,8 +9,10 @@ export const launchesKey = (rocketId: string | null, page: number) =>
 
 export interface UseLaunches {
   launches: Launch[];
-  /** Number of pages requested so far. */
+  /** Number of pages requested so far (the last may still be loading). */
   pageCount: number;
+  /** Number of pages loaded and shown. */
+  loadedPages: number;
   hasNextPage: boolean;
   loadingMore: boolean;
   /** Some visible rows are cached and being refreshed from the network. */
@@ -58,10 +60,12 @@ export function useLaunches(rocketId: string | null, cache: QueryCache = default
   }, []);
 
   const launches: Launch[] = [];
+  let loadedPages = 0;
   for (let p = 1; p <= pageCount; p++) {
     const docs = pages[p]?.data?.docs;
     if (!docs) break;
     launches.push(...docs);
+    loadedPages = p;
   }
 
   const last = pages[pageCount];
@@ -86,10 +90,13 @@ export function useLaunches(rocketId: string | null, cache: QueryCache = default
   return {
     launches,
     pageCount,
+    loadedPages,
     hasNextPage,
     loadingMore,
     refreshing,
-    error: last?.error,
+    // A failed background refresh of a page that already shows cached data isn't
+    // surfaced: the page is usable, so paging must not stall behind a Retry.
+    error: last?.data ? undefined : last?.error,
     source: pages[1]?.data?.source,
     loadMore,
     retry,

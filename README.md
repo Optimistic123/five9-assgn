@@ -18,7 +18,7 @@ npm run build    # type-check + production build
 | Table with mission name, rocket name, launch date, details, patch | `src/components/LaunchTable.tsx` |
 | Rocket dropdown filter above the table | `src/components/RocketFilter.tsx`, `src/App.tsx` |
 | "Load more" below the table, 3 records per page for 10 pages | `src/components/LaunchList.tsx`, `src/hooks/useLaunches.ts` |
-| Infinite scroll from page 11 on | `src/hooks/useInfiniteScroll.ts` (IntersectionObserver sentinel) |
+| Infinite scroll from page 11 on | `src/hooks/useInfiniteScroll.ts`: loads one page per scroll-down gesture near the bottom of the table area. A gesture ends when wheel or trackpad input pauses for 250 ms, judged from the input's own timestamps. Momentum scrolling is part of the same gesture, and a touch, key press or scrollbar drag each start a new one. Scrolling up never loads. At the very bottom, a scroll-down attempt still loads the next page. If the rows don't fill the area, the button stays. |
 | Cache for launch queries, like Apollo `cache-and-network` | `src/cache/queryCache.ts`, `src/cache/cacheAndNetwork.ts` |
 
 ### API

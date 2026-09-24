@@ -172,6 +172,16 @@ table.launches {
   color: var(--accent-text); background: var(--accent); border: none; border-radius: 8px;
 }
 .load-more:disabled { opacity: 0.6; cursor: progress; }
-.sentinel { height: 1px; width: 100%; }
 .placeholder { padding: 48px 0; text-align: center; color: var(--muted); }
 .error { color: var(--error); }
+
+/* Hidden until focused with the keyboard (then shown as a normal text button). */
+.visually-hidden-focusable:not(:focus-visible) {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.visually-hidden-focusable:focus-visible {
+  margin-top: 4px; padding: 4px 8px; font: inherit; color: var(--accent);
+  background: none; border: none; text-decoration: underline; cursor: pointer;
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
+}

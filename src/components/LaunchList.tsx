@@ -8,13 +8,12 @@ import { LoadMore } from './LoadMore';
 export const BUTTON_PAGE_LIMIT = 10;
 
 export function LaunchList({ rocketId }: { rocketId: string | null }) {
-  const { launches, pageCount, hasNextPage, loadingMore, refreshing, error, source, loadMore, retry } =
+  const { launches, pageCount, loadedPages, hasNextPage, loadingMore, refreshing, error, source, loadMore, retry } =
     useLaunches(rocketId);
   const scroller = useRef<HTMLDivElement>(null);
-  const sentinel = useRef<HTMLDivElement>(null);
 
   const infinite = pageCount >= BUTTON_PAGE_LIMIT;
-  useInfiniteScroll(sentinel, infinite && hasNextPage && !loadingMore && !error, loadMore, { root: scroller });
+  const scrollable = useInfiniteScroll(scroller, infinite && hasNextPage && !loadingMore && !error, loadMore);
 
   const firstLoad = launches.length === 0 && loadingMore;
 
@@ -35,7 +34,7 @@ export function LaunchList({ rocketId }: { rocketId: string | null }) {
         )}
         {refreshing && <span className="badge">Showing cached results · refreshing…</span>}
         <span className="muted">
-          {launches.length} launches · page {pageCount}
+          {launches.length} launches · page {loadedPages}
           {infinite ? ' · infinite scroll' : ''}
         </span>
       </div>
@@ -67,10 +66,13 @@ export function LaunchList({ rocketId }: { rocketId: string | null }) {
             </p>
           ) : !hasNextPage && !loadingMore ? (
             launches.length > 0 && <p className="muted">That’s every launch.</p>
-          ) : infinite ? (
+          ) : infinite && scrollable ? (
             <>
-              <div ref={sentinel} data-testid="scroll-sentinel" className="sentinel" />
-              {loadingMore && <p className="muted">Loading more…</p>}
+              <p className="muted">{loadingMore ? 'Loading more…' : 'Scroll for more'}</p>
+              {/* For keyboard and screen-reader users; only visible when focused. */}
+              <button type="button" className="visually-hidden-focusable" onClick={loadMore} disabled={loadingMore}>
+                Load next page
+              </button>
             </>
           ) : (
             !firstLoad && <LoadMore onClick={loadMore} loading={loadingMore} />

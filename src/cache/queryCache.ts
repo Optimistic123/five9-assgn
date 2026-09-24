@@ -64,6 +64,9 @@ export class QueryCache {
 
   clear(): void {
     this.store.clear();
+    // Forget in-flight requests too, so later fetches start fresh instead of
+    // joining a request made before the clear.
+    this.inflight.clear();
     this.persist();
   }
 
