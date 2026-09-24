@@ -54,4 +54,20 @@ describe('TruncatedText', () => {
     act(() => vi.advanceTimersByTime(500));
     expect(screen.queryByTestId('details-popover')).not.toBeInTheDocument();
   });
+
+  it('stays open while scrolling inside the popover, closes when the page scrolls', () => {
+    mockOverflow(true);
+    render(<TruncatedText text={TEXT} />);
+    fireEvent.mouseEnter(screen.getByText(TEXT));
+    act(() => vi.advanceTimersByTime(200));
+    const popover = screen.getByTestId('details-popover');
+
+    fireEvent.scroll(popover);
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.getByTestId('details-popover')).not.toHaveClass('is-closing');
+
+    fireEvent.scroll(window);
+    act(() => vi.advanceTimersByTime(300));
+    expect(screen.queryByTestId('details-popover')).not.toBeInTheDocument();
+  });
 });

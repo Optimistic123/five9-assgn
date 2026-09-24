@@ -94,12 +94,17 @@ export function TruncatedText({ text, lines = 3 }: { text: string; lines?: numbe
       clearTimer();
       close();
     };
+    // Scrolling the popover's own long text must not close it.
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && popoverRef.current?.contains(e.target)) return;
+      dismiss();
+    };
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && dismiss();
-    window.addEventListener('scroll', dismiss, true);
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', dismiss);
     window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('scroll', dismiss, true);
+      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', dismiss);
       window.removeEventListener('keydown', onKey);
     };

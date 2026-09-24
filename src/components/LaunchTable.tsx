@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import type { Launch } from '../api/types';
 import { PAGE_SIZE } from '../api/spacex';
 import { formatLaunchDate } from '../utils/formatDate';
@@ -21,6 +21,15 @@ function Cell({ className, children }: { className?: string; children: ReactNode
         </div>
       </div>
     </td>
+  );
+}
+
+/** Mission patch, falling back to text when there's no URL or the image fails to load. */
+function PatchImage({ src, mission }: { src: string | null; mission: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return <span className="muted">No patch</span>;
+  return (
+    <img src={src} alt={`${mission} patch`} width={56} height={56} loading="lazy" onError={() => setFailed(true)} />
   );
 }
 
@@ -59,11 +68,7 @@ export function LaunchTable({ launches }: { launches: Launch[] }) {
                 {l.details ? <TruncatedText text={l.details} /> : <span className="muted">No details</span>}
               </Cell>
               <Cell className="patch">
-                {l.links.patch.small ? (
-                  <img src={l.links.patch.small} alt={`${l.name} patch`} width={56} height={56} loading="lazy" />
-                ) : (
-                  <span className="muted">No patch</span>
-                )}
+                <PatchImage src={l.links.patch.small} mission={l.name} />
               </Cell>
             </tr>
           ))}
